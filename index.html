@@ -70,13 +70,18 @@
         </div>
 
         <div id="resultsContainer" class="hidden">
-            <h3 class="font-semibold text-lg mb-3 text-gray-700">Extraction Results:</h3>
+            <h3 id="resultsTitle" class="font-semibold text-lg mb-3 text-gray-700">Extraction Results:</h3>
             <div id="results" class="bg-gray-50 p-4 rounded-lg min-h-[100px] text-gray-800">
                 <!-- Extracted emails will be shown here -->
             </div>
-             <button id="copyBtn" class="mt-4 bg-gray-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-700 transition-colors w-full md:w-auto hidden">
-                Sabhi Emails Copy Karein
-            </button>
+             <div class="flex flex-col md:flex-row gap-2 mt-4">
+                 <button id="copyBtn" class="bg-gray-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-700 transition-colors w-full md:w-auto hidden">
+                    Sabhi Emails Copy Karein
+                </button>
+                <button id="checkBtn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors w-full md:w-auto hidden">
+                    Emails Online Check Karein
+                </button>
+             </div>
         </div>
 
     </div>
@@ -92,10 +97,13 @@
         const statusText = document.getElementById('statusText');
         const loader = document.getElementById('loader');
         const resultsContainer = document.getElementById('resultsContainer');
+        const resultsTitle = document.getElementById('resultsTitle');
         const results = document.getElementById('results');
         const copyBtn = document.getElementById('copyBtn');
+        const checkBtn = document.getElementById('checkBtn');
         
         let selectedFile = null;
+        let extractedEmails = [];
 
         // Handle image selection
         imageUpload.addEventListener('change', (event) => {
@@ -115,54 +123,57 @@
                 resultsContainer.classList.add('hidden');
                 results.innerHTML = '';
                 copyBtn.classList.add('hidden');
+                checkBtn.classList.add('hidden');
             }
         });
 
         // Handle button click for extraction
         extractBtn.addEventListener('click', async () => {
-            if (!selectedFile) {
-                alert("Pehle ek image file select karein.");
-                return;
-            }
+            if (!selectedFile) return;
 
-            // Show status and disable button
             status.classList.remove('hidden');
-            statusText.textContent = 'Image se text pehchan raha hai...';
+            statusText.textContent = 'Tayyar ho raha hai...';
             loader.classList.remove('hidden');
             extractBtn.disabled = true;
             resultsContainer.classList.add('hidden');
             results.innerHTML = '';
+            
+            let worker;
 
             try {
-                // Use Tesseract to recognize text
-                const { data: { text } } = await Tesseract.recognize(
-                    selectedFile,
-                    'eng', // Language
-                    { 
-                        logger: m => {
-                            if (m.status === 'recognizing text') {
-                                statusText.textContent = `Pehchan raha hai... (${Math.round(m.progress * 100)}%)`;
-                            }
-                        }
-                    }
-                );
+                const workerPath = 'https://cdn.jsdelivr.net/npm/tesseract.js@v5.0.0/dist/worker.min.js';
+                const langPath = 'https://tessdata.projectnaptha.com/4.0.0_best';
+                const corePath = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0/tesseract-core.wasm.js';
 
-                statusText.textContent = 'Emails dhoond raha hai...';
+                statusText.textContent = 'Worker aur language model load ho raha hai...';
                 
-                // Regex to find email addresses
+                worker = await Tesseract.createWorker('eng', 1, {
+                    workerPath, langPath, corePath,
+                    logger: m => {
+                        if (m.status === 'recognizing text') {
+                             statusText.textContent = `Pehchan raha hai... (${Math.round(m.progress * 100)}%)`;
+                        }
+                    },
+                });
+
+                const { data: { text } } = await worker.recognize(selectedFile);
+                
+                statusText.textContent = 'Emails dhoond raha hai...';
                 const emailRegex = /[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}/g;
                 const foundEmails = text.match(emailRegex) || [];
 
-                // Display results
                 resultsContainer.classList.remove('hidden');
                 if (foundEmails.length > 0) {
-                    // Remove duplicates using a Set
-                    const uniqueEmails = [...new Set(foundEmails)];
-                    results.innerHTML = uniqueEmails.map(email => `<div class="p-2 bg-white rounded shadow-sm mb-2">${email}</div>`).join('');
+                    extractedEmails = [...new Set(foundEmails)];
+                    resultsTitle.textContent = 'Extraction Results:';
+                    results.innerHTML = extractedEmails.map(email => `<div class="p-2 bg-white rounded shadow-sm mb-2">${email}</div>`).join('');
                     copyBtn.classList.remove('hidden');
+                    checkBtn.classList.remove('hidden');
                 } else {
+                    extractedEmails = [];
                     results.textContent = 'Is image mein koi email address nahi mila.';
                     copyBtn.classList.add('hidden');
+                    checkBtn.classList.add('hidden');
                 }
 
             } catch (error) {
@@ -170,32 +181,50 @@
                 resultsContainer.classList.remove('hidden');
                 results.innerHTML = '<p class="text-red-500">Ek error aayi. Kripya dobara koshish karein.</p>';
             } finally {
-                // Hide status and re-enable button
                 status.classList.add('hidden');
                 extractBtn.disabled = false;
+                if (worker) {
+                    await worker.terminate();
+                }
             }
         });
-
-        // Handle copy button click
-        copyBtn.addEventListener('click', () => {
-            const emailElements = results.querySelectorAll('div');
-            const emailText = Array.from(emailElements).map(el => el.textContent).join('\n');
-            
-            // Create a temporary textarea to copy text
+        
+        function copyEmailsToClipboard(emails) {
+            const emailText = emails.join('\n');
             const tempTextArea = document.createElement('textarea');
             tempTextArea.value = emailText;
             document.body.appendChild(tempTextArea);
             tempTextArea.select();
             try {
-                // Use execCommand as a fallback
                 document.execCommand('copy');
-                copyBtn.textContent = 'Copied!';
-                setTimeout(() => { copyBtn.textContent = 'Sabhi Emails Copy Karein'; }, 2000);
             } catch (err) {
                 console.error('Copy karne mein fail:', err);
-                alert('Copy nahi ho saka. Kripya manually karein.');
             }
             document.body.removeChild(tempTextArea);
+        }
+
+        copyBtn.addEventListener('click', () => {
+            if(extractedEmails.length === 0) return;
+            copyEmailsToClipboard(extractedEmails);
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => { copyBtn.textContent = 'Sabhi Emails Copy Karein'; }, 2000);
+        });
+
+        // Handle check button click
+        checkBtn.addEventListener('click', () => {
+            if (extractedEmails.length === 0) return;
+
+            // 1. Copy emails to clipboard
+            copyEmailsToClipboard(extractedEmails);
+            
+            // 2. Inform the user
+            checkBtn.textContent = 'Emails Copied! Ab Paste Karein';
+            setTimeout(() => {
+                checkBtn.textContent = 'Emails Online Check Karein';
+            }, 3000);
+
+            // 3. Open the checker website in a new tab
+            window.open('https://en.gmailcheck.com/', '_blank');
         });
 
     </script>
